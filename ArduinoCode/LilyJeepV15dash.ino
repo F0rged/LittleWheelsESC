@@ -1,6 +1,6 @@
 #include <stdio.h>
 #include <Wire.h> //Required for communications with MCP23008
-#include <FastLED.h>
+#include <FastLED.h> //Required for communications with WS2812b LEDs
 
 
 //**************DIGITAL PORTS***************

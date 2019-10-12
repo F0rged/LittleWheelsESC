@@ -11,7 +11,8 @@ When completed, this project should include:
 - 60A power to motors
 - adjustable limits for max power and max acceleration (slow start)
 - Customizable corner lights and tail lights
-- Launch Control
+- Drive Mode (Comfort vs Sport Mode)
+- Launch Control / Limited Slip
 - Wheel speed monitoring
 
 <h3>Index</h3>

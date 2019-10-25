@@ -8,16 +8,16 @@
 #define MotorDrivers_Enabled 4 // define pin 4 for both motors R_EN and L_EN
 #define RPWM_R 5 // define pin 5 for RPWM pin right motor(output)
 #define LPWM_R 6 // define pin 6 for LPWM pin right motor(output)
-#define LPWM_L 10 // define pin 10 for LPWM pin left motor(output)
-#define RPWM_L 11 // define pin 11 for RPWM pin left motor(output)
+#define LPWM_L 9 // define pin 10 for LPWM pin left motor(output)
+#define RPWM_L 10 // define pin 11 for RPWM pin left motor(output)
 //I2C Pins
-#define I2C_Interrupt_Pin 3 //Interrupt pin from MCP23008
+#define I2C_Interrupt_Pin 2 //Interrupt pin from MCP23008
 //LED Pins
-#define LED_PIN 12 //WS2812b LEDs
+#define LED_PIN 8 //WS2812b LEDs
 
 //**************ANALONG PORTS***************
 //Gas Pedal
-#define gasPedalPin A0 // define pin A0 for gas pedal pot pin (input)
+#define gasPedalPin A3 // define pin A0 for gas pedal pot pin (input)
 //Parental Controls
 #define throttleResponsePin A1 // define pin A1 for throttle response pot pin (% of max lag) (input)
 #define maxPowerPin A2 // define pin A2 for max power pot (input)
@@ -103,12 +103,13 @@ int averageWheelCurrentDifferenceSampleSize = 0;
 volatile bool ShifterEvent = false;
 volatile int ShifterEventIncrement = 1;
 //LED Settings
-#define NUM_LEDS 5 //5 WS2812B LEDs
+#define NUM_LEDS 20 //number of WS2812B LEDs
 CRGB leds[NUM_LEDS];
-enum LEDMode CurrentLEDMode = POLICE;
-enum LEDState CurrentLEDState = BLUEON;
+enum LEDMode CurrentLEDMode = NORMAL;
+enum LEDState CurrentLEDState = YELLOWON;
 unsigned long lastLEDBlink = 0; // the time the delay started
-unsigned long lastLEDPoliceSwitch = 0; // the time the delay started
+unsigned long LEDBlinkCount = 0; // the time the delay started
+unsigned long lastTimeLessThanFullThrottle = 0;
 
 void setup() {
   // Gas Pedal Setup
@@ -167,7 +168,13 @@ void loop() {
 void AdjustMotorVoltage() {
   //Get Throttle control State
   int gasPedalValue = analogRead(gasPedalPin);
+  Log("Gas Pedal:" + (String)gasPedalValue);
+  //Serial.print("Gas Pedal:");
+  //Serial.println(gasPedalValue);
   int currentGasPedalPercentage = map(gasPedalValue, 0, 1023, 0, 100);
+  if(currentGasPedalPercentage < 90){
+    lastTimeLessThanFullThrottle = millis();
+  }
 
   //Determine Target Motor Voltage Percentage and adjust as needed
   int TargetMotorVoltagePercentage = (float)currentGasPedalPercentage * ((float)currentThrottlePercentage / 100);
@@ -199,6 +206,7 @@ void AdjustMotorVoltage() {
 
 void ProcessShifterEvent() {
   if (ShifterEvent == true) {
+    Log("shifter event!");
     ShifterEvent = false;
 
     //Get ShifterState (called on interrupt from I2C)
@@ -214,7 +222,7 @@ void ProcessShifterEvent() {
     }
     if ((CurrentShifterState != MID) && ((millis() - lastShift) > 100)) { //Ignore Interrupt for shifter returning to center or too quick of a shift
 
-      Log("Shifter Event!!" + (String)ShifterEventIncrement);
+      //Log("Shifter Event!!" + (String)ShifterEventIncrement);
       lastShift = millis();
 
       //Adjust Throttle Percentage based on Drive Mode
@@ -266,10 +274,36 @@ void ProcessShifterEvent() {
 
 
 void UpdateLEDs() {
+  //Check if we need to change modes
+  Log("check:" + (String)(millis() - lastTimeLessThanFullThrottle));
+  if((millis() - lastTimeLessThanFullThrottle > 5000)&&(currentDriveMode == PARK)){
+    lastTimeLessThanFullThrottle = millis();
+    switch (CurrentLEDMode) {
+      case NORMAL:
+        CurrentLEDMode = POLICE;
+        CurrentLEDState = BLUEON;
+        break;
+      case POLICE:
+        CurrentLEDMode = FOURWAY;
+        CurrentLEDState = YELLOWON;
+        break;
+      case FOURWAY:
+        CurrentLEDMode = FOG;
+        break;
+      case FOG:
+        CurrentLEDMode = NORMAL;
+        CurrentLEDState = YELLOWON;
+        break;
+    }
+  }
+
+
+
+  
   //LED Logic
   switch (CurrentLEDMode) {
     case NORMAL:
-      LEDYellow();
+      SetAllLEDs(CRGB::Yellow);
     case POLICE:
       RunLEDPolicePattern();
       break;
@@ -277,7 +311,7 @@ void UpdateLEDs() {
       RunLED4WAYPattern();
       break;
     case FOG:
-      LEDWhite();
+      SetAllLEDs(CRGB::White);
       break;
   }
 }
@@ -288,98 +322,66 @@ void RunLED4WAYPattern() {
     switch (CurrentLEDState) {
       case YELLOWON:
         CurrentLEDState = YELLOWOFF;
-        LEDOff();
+        SetAllLEDs(CRGB::Black);
         break;
       case YELLOWOFF:
         CurrentLEDState = YELLOWON;
-        LEDYellow();
+        SetAllLEDs(CRGB::Yellow);
         break;
     }
   }
 }
 
 void RunLEDPolicePattern() {
-  if ((millis() - lastLEDBlink) > 100) {
+  if ((millis() - lastLEDBlink) > 50) {
     //Toggle blink
     lastLEDBlink = millis();
     switch (CurrentLEDState) {
       case BLUEON:
         CurrentLEDState = BLUEOFF;
-        LEDOff();
+        SetAllLEDs(CRGB::Black);
         break;
       case BLUEOFF:
-        if ((millis() - lastLEDPoliceSwitch) > 600) {
-          lastLEDPoliceSwitch = millis();
+        if (LEDBlinkCount > 3) {
+          LEDBlinkCount = 1;
           CurrentLEDState = REDON;
-          LEDRed();
+          SetLEDs(0,10,CRGB::Red);
         } else {
+          LEDBlinkCount++;
           CurrentLEDState = BLUEON;
-          LEDBlue();
+          SetLEDs(10,20,CRGB::Blue);
         }
         break;
       case REDOFF:
-        if ((millis() - lastLEDPoliceSwitch) > 600) {
-          lastLEDPoliceSwitch = millis();
+        if (LEDBlinkCount > 3) {
+          LEDBlinkCount = 1;
           CurrentLEDState = BLUEON;
-          LEDBlue();
+          SetLEDs(10,20,CRGB::Blue);
         } else {
+          LEDBlinkCount++;
           CurrentLEDState = REDON;
-          LEDRed();
+          SetLEDs(0,10,CRGB::Red);
         }
         break;
       case REDON:
         CurrentLEDState = REDOFF;
-        LEDOff();
+        SetAllLEDs(CRGB::Black);
         break;
     }
   }
 }
 
+void SetAllLEDs(CRGB NewColor){
+  SetLEDs(0,NUM_LEDS,NewColor);
+}
 
-void LEDRed() {
-  leds[0] = CRGB::Red;
-  leds[1] = CRGB::Red;
-  leds[2] = CRGB::Red;
-  leds[3] = CRGB::Red;
-  leds[4] = CRGB::Red;
+void SetLEDs(int first, int last, CRGB NewColor){
+  for(int l = first; l < last; l++){
+    leds[l] = NewColor;
+  }
   FastLED.show();
 }
 
-void LEDBlue() {
-  leds[0] = CRGB::Blue;
-  leds[1] = CRGB::Blue;
-  leds[2] = CRGB::Blue;
-  leds[3] = CRGB::Blue;
-  leds[4] = CRGB::Blue;
-  FastLED.show();
-}
-
-void LEDYellow() {
-  leds[0] = CRGB::Yellow;
-  leds[1] = CRGB::Yellow;
-  leds[2] = CRGB::Yellow;
-  leds[3] = CRGB::Yellow;
-  leds[4] = CRGB::Yellow;
-  FastLED.show();
-}
-
-void LEDOff() {
-  leds[0] = CRGB::Black;
-  leds[1] = CRGB::Black;
-  leds[2] = CRGB::Black;
-  leds[3] = CRGB::Black;
-  leds[4] = CRGB::Black;
-  FastLED.show();
-}
-
-void LEDWhite(){
-  leds[0] = CRGB::White;
-  leds[1] = CRGB::White;
-  leds[2] = CRGB::White;
-  leds[3] = CRGB::White;
-  leds[4] = CRGB::White;
-  FastLED.show();
-}
 
 void SetDriveMode(driveMode NewDriveMode) {
   currentDriveMode = NewDriveMode;
@@ -426,7 +428,7 @@ void SetDriveMode(driveMode NewDriveMode) {
       digitalWrite(MotorDrivers_Enabled, HIGH); //Motors Enabled
       break;
   }
-  Log("new drive mode:" + (String)currentDriveMode);
+  //Log("new drive mode:" + (String)currentDriveMode);
 }
 
 
@@ -445,18 +447,7 @@ byte ReadFromI2C(int TargetAddress, byte TargetRegister) {
 }
 
 void WriteToI2C(byte TargetAddress, byte TargetRegister, byte writeValue) {
-  int ShifterEventIncrementBefore = ShifterEventIncrement;
-  WriteToI2C2(TargetAddress, TargetRegister, writeValue);
-  while (ShifterEventIncrement > ShifterEventIncrementBefore) {
-    //Interrupt occurred during write.  Try again
-    Log("Retrying Write to I2C!");
-    ShifterEventIncrementBefore = ShifterEventIncrement;
-    WriteToI2C2(TargetAddress, TargetRegister, writeValue);
-  }
-}
-
-void WriteToI2C2(byte TargetAddress, byte TargetRegister, byte writeValue) {
-  Log("Write to I2C!" + (String)writeValue);
+  //Log("Write to I2C!" + (String)writeValue);
   Wire.begin(); //creates a Wire object
   Wire.beginTransmission(TargetAddress); //begins talking to the slave device
   Wire.write(TargetRegister); //selects the IODIRA register
@@ -470,7 +461,7 @@ void Accelerate(int targetThrottlePercentage) {
   int revisedMotorVoltagePercentage = targetThrottlePercentage;
 
   //Get slow start control voltage increment per millisecond
-  int throttleResponsePotVal = analogRead(throttleResponsePin);
+  int throttleResponsePotVal = 1; //analogRead(throttleResponsePin);
   //Log("throttleResponsePotVal:" + throttleResponsePotVal);
   int throttleResponseLagMillis = map(throttleResponsePotVal, 0, 1023, 0, throttleResponseMaxLag);
   //Log("  throttleResponseLagMillis:" + throttleResponseLagMillis);
